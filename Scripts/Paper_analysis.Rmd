@@ -1,0 +1,1544 @@
+#1. Libraries
+```{r}
+library(tidyverse)
+library(fistools)
+library(effectsize)
+source("./Functions/PCI.R")
+
+```
+
+#3. Data
+```{r}
+Survey_data <- read.csv("./Data/Data_survey.csv",
+                        header = TRUE,
+                        sep = ",") 
+#Work data
+work_dataset <- Survey_data 
+work_dataset <- tibble::rowid_to_column(work_dataset, "ID") 
+```
+
+#4. Analysis
+##4.1 PCI
+```{r}
+dataset_maatregelen <- work_dataset %>% 
+  dplyr::select(ID, WBA, GemMet, Year, Q19a:Q19f) %>% 
+  gather(key = "Question", value = "Score", Q19a:Q19f) %>%
+  filter(Score != "NA") %>%
+  mutate(Score = Score - 3)
+
+opties_maatregelen <- letters[1:6]
+labels_maatregelen <-  c('Non-electric fencing', 'Electric fencing', 
+                         'Hunting', 'Cages', 'Translocation', 'Anticonception')
+
+dataset_pci_maatregelen <- dataset_maatregelen %>%
+   mutate(
+    vraag_nr = substring(Question,1,3),
+    vraag_optie = substring(Question,4,6),
+    vraag_label = factor(vraag_optie,opties_maatregelen,labels_maatregelen),
+     ) %>%
+    group_by(vraag_label, WBA, Year) %>%
+    summarize(meanAnswer = mean(Score), 
+              sdAnswer = sd(Score),
+              pci2 = qd_pci2(Score),
+              aantal = length(ID)) %>%
+  mutate(WBA = case_when(WBA == 1 ~ "Wild boar area",
+                            WBA == 0 ~ "No wild boar area"))
+```
+
+
+##4.2 Anova
+###4.2.1 Non-Electric fencing
+```{r}
+nonelectric_fencing <- dataset_pci_maatregelen %>%
+  filter(vraag_label == "Non-electric fencing")
+
+#Data anova
+nonelectric_fencing_data <- work_dataset %>% 
+  dplyr::select(ID, 
+                WBA, 
+                Year,
+                Q19a) %>% 
+  gather(key = "Question", 
+         value = "Score", 
+         Q19a) %>%
+  filter(Score != 6) %>%
+  mutate(Score = Score - 3) %>%
+  transmute(ID, 
+            WBA = factor(WBA), 
+            Question = factor(Question),
+            Year = factor(Year), 
+            Score)
+
+Anova_nonelectric_fencing <- aov(data = nonelectric_fencing_data, Score ~ Year*WBA)
+
+Anova_nonelectric_fencing2 <- aov(data = nonelectric_fencing_data, Score ~ Year+WBA)
+anova(Anova_nonelectric_fencing2, Anova_nonelectric_fencing)
+
+summary_nonelectric_fencing <- summary(Anova_nonelectric_fencing2)
+summary_nonelectric_fencing
+
+effectsize::eta_squared(Anova_nonelectric_fencing2, partial = FALSE)
+effectsize::eta_squared(Anova_nonelectric_fencing2, partial = TRUE)
+
+
+# Tamhane t-tests 
+tamhane_nonelectric_fencing_year <- pairwise.t.test(x = nonelectric_fencing_data$Score,
+                                                    g = nonelectric_fencing_data$Year,
+                                                    p.adjust.method = "holm",
+                                                    pool.sd = FALSE)  # Welch t-test
+tamhane_nonelectric_fencing_year
+
+tamhane_nonelectric_fencing_wba <- pairwise.t.test(x = nonelectric_fencing_data$Score,
+                                                   g = nonelectric_fencing_data$WBA,
+                                                   p.adjust.method = "holm",
+                                                   pool.sd = FALSE)  # Welch t-test
+tamhane_nonelectric_fencing_wba
+
+#Differences between years
+means_year <- tapply(nonelectric_fencing_data$Score, nonelectric_fencing_data$Year, mean)
+year_combos <- combn(names(means_year), 2, simplify = FALSE)
+diffs_year <- sapply(year_combos, function(pair) {
+  means_year[pair[2]] - means_year[pair[1]]})
+
+diff_table_year <- data.frame(Group1 = sapply(year_combos, `[`, 1),
+                              Group2 = sapply(year_combos, `[`, 2),
+                              MeanDifference = diffs_year)
+
+tamhane_year <- pairwise.t.test(x = nonelectric_fencing_data$Score,
+                                 g = nonelectric_fencing_data$Year,
+                                 p.adjust.method = "holm",
+                                 pool.sd = FALSE)
+
+pvals_year <- as.data.frame(as.table(tamhane_year$p.value))
+colnames(pvals_year) <- c("Group1", "Group2", "p_value")
+
+
+pvals_year$Group1 <- as.character(pvals_year$Group1)
+pvals_year$Group2 <- as.character(pvals_year$Group2)
+pvals_year_sorted <- pvals_year
+pvals_year_sorted$min <- pmin(pvals_year$Group1, pvals_year$Group2)
+pvals_year_sorted$max <- pmax(pvals_year$Group1, pvals_year$Group2)
+
+pvals_year_clean <- subset(pvals_year_sorted, !is.na(p_value))
+pvals_year_clean <- pvals_year_clean[, c("min", "max", "p_value")]
+colnames(pvals_year_clean) <- c("Group1", "Group2", "p_value")
+
+tamhane_results_year <- merge(diff_table_year, pvals_year_clean, by = c("Group1", "Group2"))
+
+print(tamhane_results_year)
+
+
+#Differences WBA-NWBA
+means_wba <- tapply(nonelectric_fencing_data$Score, nonelectric_fencing_data$WBA, mean)
+wba_combos <- combn(names(means_wba), 2, simplify = FALSE)
+
+diffs_wba <- sapply(wba_combos, function(pair) {
+  means_wba[pair[2]] - means_wba[pair[1]]
+})
+
+diff_table_wba <- data.frame(
+  Group1 = sapply(wba_combos, `[`, 1),
+  Group2 = sapply(wba_combos, `[`, 2),
+  MeanDifference = diffs_wba
+)
+
+tamhane_wba <- pairwise.t.test(x = nonelectric_fencing_data$Score,
+                                g = nonelectric_fencing_data$WBA,
+                                p.adjust.method = "holm",
+                                pool.sd = FALSE)
+
+pvals_wba <- as.data.frame(as.table(tamhane_wba$p.value))
+colnames(pvals_wba) <- c("Group1", "Group2", "p_value")
+
+pvals_wba$Group1 <- as.character(pvals_wba$Group1)
+pvals_wba$Group2 <- as.character(pvals_wba$Group2)
+
+pvals_wba$min <- pmin(pvals_wba$Group1, pvals_wba$Group2)
+pvals_wba$max <- pmax(pvals_wba$Group1, pvals_wba$Group2)
+
+pvals_wba_clean <- subset(pvals_wba, !is.na(p_value))
+pvals_wba_clean <- pvals_wba_clean[, c("min", "max", "p_value")]
+colnames(pvals_wba_clean) <- c("Group1", "Group2", "p_value")
+
+tamhane_results_wba <- merge(diff_table_wba, pvals_wba_clean, by = c("Group1", "Group2"))
+print(tamhane_results_wba)
+```
+
+###4.2.2 Electric fencing
+```{r}
+electric_fencing <- dataset_pci_maatregelen %>%
+  filter(vraag_label == "Electric fencing")
+
+electric_fencing_data <- work_dataset %>% 
+  dplyr::select(ID, 
+                WBA, 
+                Year,
+                Q19b) %>% 
+  gather(key = "Question", 
+         value = "Score", 
+         Q19b) %>%
+  filter(Score != 6) %>%
+  mutate(Score = Score - 3) %>%
+  transmute(ID, 
+            WBA = factor(WBA), 
+            Question = factor(Question),
+            Year = factor(Year), 
+            Score)
+Anova_electric_fencing <- aov(data = electric_fencing_data,  Score ~ Year*WBA)
+
+Anova_electric_fencing2 <- aov(data = electric_fencing_data,Score ~ Year+WBA)
+anova(Anova_electric_fencing2, Anova_electric_fencing)
+
+summary_electric_fencing <- summary(Anova_electric_fencing2)
+summary_electric_fencing
+
+effectsize::eta_squared(Anova_electric_fencing2, partial = FALSE)
+effectsize::eta_squared(Anova_electric_fencing2, partial = TRUE)
+
+# Tamhane t-tests 
+tamhane_electric_fencing_year <- pairwise.t.test(x = electric_fencing_data$Score,
+                                                    g = electric_fencing_data$Year,
+                                                    p.adjust.method = "holm",
+                                                    pool.sd = FALSE)  # Welch t-test
+tamhane_electric_fencing_year
+
+tamhane_electric_fencing_wba <- pairwise.t.test(x = electric_fencing_data$Score,
+                                                   g = electric_fencing_data$WBA,
+                                                   p.adjust.method = "holm",
+                                                   pool.sd = FALSE)  # Welch t-test
+tamhane_electric_fencing_wba
+
+
+means_year <- tapply(electric_fencing_data$Score, electric_fencing_data$Year, mean)
+year_combos <- combn(names(means_year), 2, simplify = FALSE)
+
+diffs_year <- sapply(year_combos, function(pair) {
+  means_year[pair[2]] - means_year[pair[1]]})
+
+diff_table_year <- data.frame(Group1 = sapply(year_combos, `[`, 1),
+                              Group2 = sapply(year_combos, `[`, 2),
+                              MeanDifference = diffs_year)
+
+tamhane_year <- pairwise.t.test(x = electric_fencing_data$Score,
+                                 g = electric_fencing_data$Year,
+                                 p.adjust.method = "holm",
+                                 pool.sd = FALSE)
+
+pvals_year <- as.data.frame(as.table(tamhane_year$p.value))
+colnames(pvals_year) <- c("Group1", "Group2", "p_value")
+pvals_year$Group1 <- as.character(pvals_year$Group1)
+pvals_year$Group2 <- as.character(pvals_year$Group2)
+pvals_year_sorted <- pvals_year
+pvals_year_sorted$min <- pmin(pvals_year$Group1, pvals_year$Group2)
+pvals_year_sorted$max <- pmax(pvals_year$Group1, pvals_year$Group2)
+
+pvals_year_clean <- subset(pvals_year_sorted, !is.na(p_value))
+pvals_year_clean <- pvals_year_clean[, c("min", "max", "p_value")]
+colnames(pvals_year_clean) <- c("Group1", "Group2", "p_value")
+
+tamhane_results_year <- merge(diff_table_year, pvals_year_clean, by = c("Group1", "Group2"))
+
+print(tamhane_results_year)
+
+
+#Differences WBA-NWBA
+means_wba <- tapply(electric_fencing_data$Score, electric_fencing_data$WBA, mean)
+wba_combos <- combn(names(means_wba), 2, simplify = FALSE)
+diffs_wba <- sapply(wba_combos, function(pair) {
+  means_wba[pair[2]] - means_wba[pair[1]]
+})
+
+diff_table_wba <- data.frame(
+  Group1 = sapply(wba_combos, `[`, 1),
+  Group2 = sapply(wba_combos, `[`, 2),
+  MeanDifference = diffs_wba
+)
+
+tamhane_wba <- pairwise.t.test(x = electric_fencing_data$Score,
+                                g = electric_fencing_data$WBA,
+                                p.adjust.method = "holm",
+                                pool.sd = FALSE)
+
+pvals_wba <- as.data.frame(as.table(tamhane_wba$p.value))
+colnames(pvals_wba) <- c("Group1", "Group2", "p_value")
+pvals_wba$Group1 <- as.character(pvals_wba$Group1)
+pvals_wba$Group2 <- as.character(pvals_wba$Group2)
+pvals_wba$min <- pmin(pvals_wba$Group1, pvals_wba$Group2)
+pvals_wba$max <- pmax(pvals_wba$Group1, pvals_wba$Group2)
+
+pvals_wba_clean <- subset(pvals_wba, !is.na(p_value))
+pvals_wba_clean <- pvals_wba_clean[, c("min", "max", "p_value")]
+colnames(pvals_wba_clean) <- c("Group1", "Group2", "p_value")
+
+tamhane_results_wba <- merge(diff_table_wba, pvals_wba_clean, by = c("Group1", "Group2"))
+print(tamhane_results_wba)
+```
+
+###4.2.3 Hunting
+```{r}
+hunting <- dataset_pci_maatregelen %>%
+  filter(vraag_label == "Hunting")
+
+hunting_data <- work_dataset %>% 
+  dplyr::select(ID, 
+                WBA, 
+                Year,
+                Q19c) %>% 
+  gather(key = "Question", 
+         value = "Score", 
+         Q19c) %>%
+  filter(Score != 6) %>%
+  mutate(Score = Score - 3) %>%
+  transmute(ID, 
+            WBA = factor(WBA), 
+            Question = factor(Question),
+            Year = factor(Year), 
+            Score)
+
+
+Anova_hunting <- aov(data = hunting_data, Score ~ Year*WBA)
+Anova_hunting2 <- aov(data = hunting_data, Score ~ Year+WBA)
+anova(Anova_hunting2,Anova_hunting)
+
+summary_hunting <- summary(Anova_hunting)
+summary_hunting
+
+effectsize::eta_squared(Anova_hunting, partial = FALSE)
+
+# Tamhane t-tests
+hunting_data$Year_WBA <- interaction(hunting_data$Year, hunting_data$WBA)
+levels(hunting_data$Year_WBA)
+tamhane_hunting_interactie <- pairwise.t.test(x = hunting_data$Score,
+                                       g = hunting_data$Year_WBA,
+                                       p.adjust.method = "holm",
+                                       pool.sd = FALSE)
+
+tamhane_hunting_interactie
+
+means_year <- tapply(hunting_data$Score, hunting_data$Year, mean)
+
+year_combos <- combn(names(means_year), 2, simplify = FALSE)
+diffs_year <- sapply(year_combos, function(pair) {
+  means_year[pair[2]] - means_year[pair[1]]})
+
+diff_table_year <- data.frame(Group1 = sapply(year_combos, `[`, 1),
+                              Group2 = sapply(year_combos, `[`, 2),
+                              MeanDifference = diffs_year)
+
+tamhane_year <- pairwise.t.test(x = hunting_data$Score,
+                                 g = hunting_data$Year,
+                                 p.adjust.method = "holm",
+                                 pool.sd = FALSE)
+
+pvals_year <- as.data.frame(as.table(tamhane_year$p.value))
+colnames(pvals_year) <- c("Group1", "Group2", "p_value")
+
+pvals_year$Group1 <- as.character(pvals_year$Group1)
+pvals_year$Group2 <- as.character(pvals_year$Group2)
+pvals_year_sorted <- pvals_year
+pvals_year_sorted$min <- pmin(pvals_year$Group1, pvals_year$Group2)
+pvals_year_sorted$max <- pmax(pvals_year$Group1, pvals_year$Group2)
+pvals_year_clean <- subset(pvals_year_sorted, !is.na(p_value))
+
+pvals_year_clean <- pvals_year_clean[, c("min", "max", "p_value")]
+colnames(pvals_year_clean) <- c("Group1", "Group2", "p_value")
+
+tamhane_results_year <- merge(diff_table_year, pvals_year_clean, by = c("Group1", "Group2"))
+
+print(tamhane_results_year)
+
+
+# Difference WBA-NWBA
+means_wba <- tapply(hunting_data$Score, hunting_data$WBA, mean)
+wba_combos <- combn(names(means_wba), 2, simplify = FALSE)
+
+diffs_wba <- sapply(wba_combos, function(pair) {
+  means_wba[pair[2]] - means_wba[pair[1]]
+})
+
+diff_table_wba <- data.frame(
+  Group1 = sapply(wba_combos, `[`, 1),
+  Group2 = sapply(wba_combos, `[`, 2),
+  MeanDifference = diffs_wba
+)
+
+tamhane_wba <- pairwise.t.test(x = hunting_data$Score,
+                                g = hunting_data$WBA,
+                                p.adjust.method = "holm",
+                                pool.sd = FALSE)
+
+pvals_wba <- as.data.frame(as.table(tamhane_wba$p.value))
+colnames(pvals_wba) <- c("Group1", "Group2", "p_value")
+
+pvals_wba$Group1 <- as.character(pvals_wba$Group1)
+pvals_wba$Group2 <- as.character(pvals_wba$Group2)
+pvals_wba$min <- pmin(pvals_wba$Group1, pvals_wba$Group2)
+pvals_wba$max <- pmax(pvals_wba$Group1, pvals_wba$Group2)
+
+pvals_wba_clean <- subset(pvals_wba, !is.na(p_value))
+pvals_wba_clean <- pvals_wba_clean[, c("min", "max", "p_value")]
+colnames(pvals_wba_clean) <- c("Group1", "Group2", "p_value")
+
+tamhane_results_wba <- merge(diff_table_wba, pvals_wba_clean, by = c("Group1", "Group2"))
+print(tamhane_results_wba)
+```
+
+###4.2.4 Cages
+```{r}
+cages <- dataset_pci_maatregelen %>%
+  filter(vraag_label == "Cages")
+
+cages_data <- work_dataset %>% 
+  dplyr::select(ID, 
+                WBA, 
+                Year,
+                Q19d) %>% 
+  gather(key = "Question", 
+         value = "Score", 
+         Q19d) %>%
+  filter(Score != 6) %>%
+  mutate(Score = Score - 3) %>%
+  transmute(ID, 
+            WBA = factor(WBA), 
+            Question = factor(Question),
+            Year = factor(Year), 
+            Score)
+
+
+Anova_cages <- aov(data = cages_data, Score ~ Year*WBA)
+
+Anova_cages2 <- aov(data = cages_data, Score ~ Year+WBA)
+anova(Anova_cages2, Anova_cages)
+
+summary_cages <- summary(Anova_cages)
+summary_cages
+
+effectsize::eta_squared(Anova_cages, partial = FALSE)
+effectsize::omega_squared(Anova_cages, partial = FALSE)
+
+cages_data$Year_WBA <- interaction(cages_data$Year, cages_data$WBA)
+levels(cages_data$Year_WBA)
+
+# Tamhane t-tests 
+tamhane_cages_interactie <- pairwise.t.test(x = cages_data$Score,
+                                       g = cages_data$Year_WBA,
+                                       p.adjust.method = "holm",
+                                       pool.sd = FALSE)
+
+tamhane_cages_interactie
+
+means_year <- tapply(cages_data$Score, cages_data$Year, mean)
+year_combos <- combn(names(means_year), 2, simplify = FALSE)
+diffs_year <- sapply(year_combos, function(pair) {
+  means_year[pair[2]] - means_year[pair[1]]})
+
+diff_table_year <- data.frame(Group1 = sapply(year_combos, `[`, 1),
+                              Group2 = sapply(year_combos, `[`, 2),
+                              MeanDifference = diffs_year)
+
+tamhane_year <- pairwise.t.test(x = cages_data$Score,
+                                 g = cages_data$Year,
+                                 p.adjust.method = "holm",
+                                 pool.sd = FALSE)
+
+pvals_year <- as.data.frame(as.table(tamhane_year$p.value))
+colnames(pvals_year) <- c("Group1", "Group2", "p_value")
+
+
+pvals_year$Group1 <- as.character(pvals_year$Group1)
+pvals_year$Group2 <- as.character(pvals_year$Group2)
+
+pvals_year_sorted <- pvals_year
+pvals_year_sorted$min <- pmin(pvals_year$Group1, pvals_year$Group2)
+pvals_year_sorted$max <- pmax(pvals_year$Group1, pvals_year$Group2)
+
+pvals_year_clean <- subset(pvals_year_sorted, !is.na(p_value))
+pvals_year_clean <- pvals_year_clean[, c("min", "max", "p_value")]
+colnames(pvals_year_clean) <- c("Group1", "Group2", "p_value")
+
+tamhane_results_year <- merge(diff_table_year, pvals_year_clean, by = c("Group1", "Group2"))
+
+print(tamhane_results_year)
+
+
+# Difference WBA-NWBA
+means_wba <- tapply(cages_data$Score, cages_data$WBA, mean)
+wba_combos <- combn(names(means_wba), 2, simplify = FALSE)
+
+diffs_wba <- sapply(wba_combos, function(pair) {
+  means_wba[pair[2]] - means_wba[pair[1]]
+})
+
+diff_table_wba <- data.frame(
+  Group1 = sapply(wba_combos, `[`, 1),
+  Group2 = sapply(wba_combos, `[`, 2),
+  MeanDifference = diffs_wba
+)
+tamhane_wba <- pairwise.t.test(x = cages_data$Score,
+                                g = cages_data$WBA,
+                                p.adjust.method = "holm",
+                                pool.sd = FALSE)
+
+pvals_wba <- as.data.frame(as.table(tamhane_wba$p.value))
+colnames(pvals_wba) <- c("Group1", "Group2", "p_value")
+pvals_wba$Group1 <- as.character(pvals_wba$Group1)
+pvals_wba$Group2 <- as.character(pvals_wba$Group2)
+pvals_wba$min <- pmin(pvals_wba$Group1, pvals_wba$Group2)
+pvals_wba$max <- pmax(pvals_wba$Group1, pvals_wba$Group2)
+
+pvals_wba_clean <- subset(pvals_wba, !is.na(p_value))
+pvals_wba_clean <- pvals_wba_clean[, c("min", "max", "p_value")]
+colnames(pvals_wba_clean) <- c("Group1", "Group2", "p_value")
+
+tamhane_results_wba <- merge(diff_table_wba, pvals_wba_clean, by = c("Group1", "Group2"))
+print(tamhane_results_wba)
+```
+
+###4.2.5 Translocation
+```{r}
+Translocation <- dataset_pci_maatregelen %>%
+  filter(vraag_label == "Translocation")
+
+Translocation_data <- work_dataset %>% 
+  dplyr::select(ID, 
+                WBA, 
+                Year,
+                Q19e) %>% 
+  gather(key = "Question", 
+         value = "Score", 
+         Q19e) %>%
+  filter(Score != 6) %>%
+  mutate(Score = Score - 3) %>%
+  transmute(ID, 
+            WBA = factor(WBA), 
+            Question = factor(Question),
+            Year = factor(Year), 
+            Score)
+
+
+Anova_Translocation <- aov(data = Translocation_data, Score ~ Year*WBA)
+Anova_Translocation2 <- aov(data = Translocation_data, Score ~ Year+WBA)
+anova(Anova_Translocation2, Anova_Translocation)
+summary_Translocation <- summary(Anova_Translocation2)
+summary_Translocation
+
+effectsize::eta_squared(Anova_Translocation2, partial = FALSE)
+effectsize::eta_squared(Anova_Translocation2, partial = TRUE)
+effectsize::omega_squared(Anova_Translocation2, partial = TRUE)
+
+# Tamhane t-tests
+tamhane_Translocation_year <- pairwise.t.test(x = Translocation_data$Score,
+                                                    g = Translocation_data$Year,
+                                                    p.adjust.method = "holm",
+                                                    pool.sd = FALSE)  # Welch t-test
+tamhane_Translocation_year
+
+tamhane_Translocation_wba <- pairwise.t.test(x = Translocation_data$Score,
+                                                   g = Translocation_data$WBA,
+                                                   p.adjust.method = "holm",
+                                                   pool.sd = FALSE)  # Welch t-test
+tamhane_Translocation_wba
+
+means_year <- tapply(Translocation_data$Score, Translocation_data$Year, mean)
+year_combos <- combn(names(means_year), 2, simplify = FALSE)
+diffs_year <- sapply(year_combos, function(pair) {
+  means_year[pair[2]] - means_year[pair[1]]})
+
+diff_table_year <- data.frame(Group1 = sapply(year_combos, `[`, 1),
+                              Group2 = sapply(year_combos, `[`, 2),
+                              MeanDifference = diffs_year)
+
+tamhane_year <- pairwise.t.test(x = Translocation_data$Score,
+                                 g = Translocation_data$Year,
+                                 p.adjust.method = "holm",
+                                 pool.sd = FALSE)
+
+pvals_year <- as.data.frame(as.table(tamhane_year$p.value))
+colnames(pvals_year) <- c("Group1", "Group2", "p_value")
+
+
+pvals_year$Group1 <- as.character(pvals_year$Group1)
+pvals_year$Group2 <- as.character(pvals_year$Group2)
+pvals_year_sorted <- pvals_year
+pvals_year_sorted$min <- pmin(pvals_year$Group1, pvals_year$Group2)
+pvals_year_sorted$max <- pmax(pvals_year$Group1, pvals_year$Group2)
+pvals_year_clean <- subset(pvals_year_sorted, !is.na(p_value))
+
+pvals_year_clean <- pvals_year_clean[, c("min", "max", "p_value")]
+colnames(pvals_year_clean) <- c("Group1", "Group2", "p_value")
+
+tamhane_results_year <- merge(diff_table_year, pvals_year_clean, by = c("Group1", "Group2"))
+print(tamhane_results_year)
+
+
+# Difference WBA-NWBA
+means_wba <- tapply(Translocation_data$Score, Translocation_data$WBA, mean)
+
+wba_combos <- combn(names(means_wba), 2, simplify = FALSE)
+diffs_wba <- sapply(wba_combos, function(pair) {
+  means_wba[pair[2]] - means_wba[pair[1]]
+})
+
+diff_table_wba <- data.frame(
+  Group1 = sapply(wba_combos, `[`, 1),
+  Group2 = sapply(wba_combos, `[`, 2),
+  MeanDifference = diffs_wba
+)
+
+tamhane_wba <- pairwise.t.test(x = Translocation_data$Score,
+                                g = Translocation_data$WBA,
+                                p.adjust.method = "holm",
+                                pool.sd = FALSE)
+
+pvals_wba <- as.data.frame(as.table(tamhane_wba$p.value))
+colnames(pvals_wba) <- c("Group1", "Group2", "p_value")
+
+pvals_wba$Group1 <- as.character(pvals_wba$Group1)
+pvals_wba$Group2 <- as.character(pvals_wba$Group2)
+pvals_wba$min <- pmin(pvals_wba$Group1, pvals_wba$Group2)
+pvals_wba$max <- pmax(pvals_wba$Group1, pvals_wba$Group2)
+
+pvals_wba_clean <- subset(pvals_wba, !is.na(p_value))
+pvals_wba_clean <- pvals_wba_clean[, c("min", "max", "p_value")]
+colnames(pvals_wba_clean) <- c("Group1", "Group2", "p_value")
+
+tamhane_results_wba <- merge(diff_table_wba, pvals_wba_clean, by = c("Group1", "Group2"))
+print(tamhane_results_wba)
+```
+###4.2.6 Anticonception
+```{r}
+anticonception <- dataset_pci_maatregelen %>%
+  filter(vraag_label == "Anticonception")
+
+anticonception_data <- work_dataset %>% 
+  dplyr::select(ID, 
+                WBA, 
+                Year,
+                Q19f) %>% 
+  gather(key = "Question", 
+         value = "Score", 
+         Q19f) %>%
+  filter(Score != 6) %>%
+  mutate(Score = Score - 3) %>%
+  transmute(ID, 
+            WBA = factor(WBA), 
+            Question = factor(Question),
+            Year = factor(Year), 
+            Score)
+
+
+Anova_anticonception <- aov(data = anticonception_data,
+                                        Score ~ Year*WBA)
+Anova_anticonception2 <- aov(data = anticonception_data,
+                                        Score ~ Year+WBA)
+anova(Anova_anticonception2, Anova_anticonception)
+summary_anticonception <- summary(Anova_anticonception)
+summary_anticonception
+
+effectsize::eta_squared(Anova_anticonception, partial = FALSE)
+effectsize::eta_squared(Anova_anticonception, partial = TRUE)
+
+tukey_anticonception <- TukeyHSD(Anova_anticonception)
+tukey_anticonception
+
+anticonception_data$Year_WBA <- interaction(anticonception_data$Year, anticonception_data$WBA)
+levels(anticonception_data$Year_WBA)
+
+# Tamhane t-tests
+tamhane_anticonception_interactie <- pairwise.t.test(x = anticonception_data$Score,
+                                       g = anticonception_data$Year_WBA,
+                                       p.adjust.method = "holm",
+                                       pool.sd = FALSE)
+
+tamhane_anticonception_interactie
+means_year <- tapply(anticonception_data$Score, anticonception_data$Year, mean)
+year_combos <- combn(names(means_year), 2, simplify = FALSE)
+diffs_year <- sapply(year_combos, function(pair) {
+  means_year[pair[2]] - means_year[pair[1]]})
+
+diff_table_year <- data.frame(Group1 = sapply(year_combos, `[`, 1),
+                              Group2 = sapply(year_combos, `[`, 2),
+                              MeanDifference = diffs_year)
+
+tamhane_year <- pairwise.t.test(x = anticonception_data$Score,
+                                 g = anticonception_data$Year,
+                                 p.adjust.method = "holm",
+                                 pool.sd = FALSE)
+
+pvals_year <- as.data.frame(as.table(tamhane_year$p.value))
+colnames(pvals_year) <- c("Group1", "Group2", "p_value")
+
+pvals_year$Group1 <- as.character(pvals_year$Group1)
+pvals_year$Group2 <- as.character(pvals_year$Group2)
+
+pvals_year_sorted <- pvals_year
+pvals_year_sorted$min <- pmin(pvals_year$Group1, pvals_year$Group2)
+pvals_year_sorted$max <- pmax(pvals_year$Group1, pvals_year$Group2)
+
+pvals_year_clean <- subset(pvals_year_sorted, !is.na(p_value))
+pvals_year_clean <- pvals_year_clean[, c("min", "max", "p_value")]
+colnames(pvals_year_clean) <- c("Group1", "Group2", "p_value")
+
+tamhane_results_year <- merge(diff_table_year, pvals_year_clean, by = c("Group1", "Group2"))
+print(tamhane_results_year)
+
+
+# Difference WBA-NWBA
+means_wba <- tapply(anticonception_data$Score, anticonception_data$WBA, mean)
+wba_combos <- combn(names(means_wba), 2, simplify = FALSE)
+diffs_wba <- sapply(wba_combos, function(pair) {
+  means_wba[pair[2]] - means_wba[pair[1]]
+})
+
+diff_table_wba <- data.frame(
+  Group1 = sapply(wba_combos, `[`, 1),
+  Group2 = sapply(wba_combos, `[`, 2),
+  MeanDifference = diffs_wba
+)
+
+tamhane_wba <- pairwise.t.test(x = anticonception_data$Score,
+                                g = anticonception_data$WBA,
+                                p.adjust.method = "holm",
+                                pool.sd = FALSE)
+
+pvals_wba <- as.data.frame(as.table(tamhane_wba$p.value))
+colnames(pvals_wba) <- c("Group1", "Group2", "p_value")
+
+pvals_wba$Group1 <- as.character(pvals_wba$Group1)
+pvals_wba$Group2 <- as.character(pvals_wba$Group2)
+pvals_wba$min <- pmin(pvals_wba$Group1, pvals_wba$Group2)
+pvals_wba$max <- pmax(pvals_wba$Group1, pvals_wba$Group2)
+
+pvals_wba_clean <- subset(pvals_wba, !is.na(p_value))
+pvals_wba_clean <- pvals_wba_clean[, c("min", "max", "p_value")]
+colnames(pvals_wba_clean) <- c("Group1", "Group2", "p_value")
+
+tamhane_results_wba <- merge(diff_table_wba, pvals_wba_clean, by = c("Group1", "Group2"))
+print(tamhane_results_wba)
+
+```
+#5. Presence in Flanders 
+##5.1 PCI
+```{r}
+dataset_aanwezigheid <- work_dataset %>% 
+  dplyr::select(ID, WBA, Year, Q12,Q13) %>% 
+  gather(key = "Question", value = "Score", Q12,Q13) %>%
+  filter(Score != "NA") %>%
+  filter(Score != 6) %>% 
+  mutate(Score = Score - 3)
+
+dataset_pci_aanwezigheid <- dataset_aanwezigheid %>%
+   mutate(vraag_label = case_when(Question == "Q12" ~ "Flanders-general",
+                                  Question == "Q13" ~ "Own region")) %>%
+    group_by(vraag_label, WBA, Year) %>%
+    summarize(meanAnswer = mean(Score), 
+              pci2 = qd_pci2(Score),
+              aantal = length(ID)) %>%
+  mutate(WBA = case_when(WBA == 1 ~ "Wild boar area",
+                            WBA == 0 ~ "No wild boar area"))
+
+dataset_pci_aanwezigheid$vraag = "vraag1"
+
+dataset_pci_aanwezigheid$Year <- as.factor(dataset_pci_aanwezigheid$Year)
+dataset_pci_aanwezigheid$vraag_label <- as.factor(dataset_pci_aanwezigheid$vraag_label)
+
+dataset_pci_aanwezigheid <- dataset_pci_aanwezigheid %>%
+  mutate(group = paste(WBA, "-", Year))
+```
+
+##5.2 Anova
+###5.2.1 Flanders-general
+```{r}
+flanders <- dataset_pci_aanwezigheid %>%
+  filter(vraag_label == "Flanders-general")
+
+flanders_data <- work_dataset %>% 
+  dplyr::select(ID, 
+                WBA, 
+                Year,
+                Q12) %>% 
+  gather(key = "Question", 
+         value = "Score", 
+         Q12) %>%
+  filter(Score != 6) %>%
+  mutate(Score = Score - 3) %>%
+  transmute(ID, 
+            WBA = factor(WBA), 
+            Question = factor(Question),
+            Year = factor(Year), 
+            Score)
+
+
+Anova_flanders <- aov(data = flanders_data,  Score ~ Year*WBA)
+Anova_flanders2 <- aov(data = flanders_data,   Score ~ Year+WBA)
+anova(Anova_flanders2, Anova_flanders)
+summary_flanders <- summary(Anova_flanders)
+summary_flanders
+
+effectsize::eta_squared(Anova_flanders, partial = FALSE)
+effectsize::eta_squared(Anova_flanders, partial = TRUE)
+
+
+# Tamhane t-tests 
+flanders_data$Year_WBA <- interaction(flanders_data$Year, flanders_data$WBA)
+levels(flanders_data$Year_WBA)
+
+tamhane_flanders_interactie <- pairwise.t.test(x = flanders_data$Score,
+                                       g = flanders_data$Year_WBA,
+                                       p.adjust.method = "holm",
+                                       pool.sd = FALSE)
+
+tamhane_flanders_interactie
+means_year <- tapply(flanders_data$Score, flanders_data$Year, mean)
+year_combos <- combn(names(means_year), 2, simplify = FALSE)
+diffs_year <- sapply(year_combos, function(pair) {
+  means_year[pair[2]] - means_year[pair[1]]})
+
+diff_table_year <- data.frame(Group1 = sapply(year_combos, `[`, 1),
+                              Group2 = sapply(year_combos, `[`, 2),
+                              MeanDifference = diffs_year)
+
+tamhane_year <- pairwise.t.test(x = flanders_data$Score,
+                                 g = flanders_data$Year,
+                                 p.adjust.method = "holm",
+                                 pool.sd = FALSE)
+
+pvals_year <- as.data.frame(as.table(tamhane_year$p.value))
+colnames(pvals_year) <- c("Group1", "Group2", "p_value")
+pvals_year$Group1 <- as.character(pvals_year$Group1)
+pvals_year$Group2 <- as.character(pvals_year$Group2)
+pvals_year_sorted <- pvals_year
+pvals_year_sorted$min <- pmin(pvals_year$Group1, pvals_year$Group2)
+pvals_year_sorted$max <- pmax(pvals_year$Group1, pvals_year$Group2)
+
+pvals_year_clean <- subset(pvals_year_sorted, !is.na(p_value))
+
+pvals_year_clean <- pvals_year_clean[, c("min", "max", "p_value")]
+colnames(pvals_year_clean) <- c("Group1", "Group2", "p_value")
+
+tamhane_results_year <- merge(diff_table_year, pvals_year_clean, by = c("Group1", "Group2"))
+
+print(tamhane_results_year)
+
+means_wba <- tapply(flanders_data$Score, flanders_data$WBA, mean)
+
+wba_combos <- combn(names(means_wba), 2, simplify = FALSE)
+
+diffs_wba <- sapply(wba_combos, function(pair) {
+  means_wba[pair[2]] - means_wba[pair[1]]
+})
+
+diff_table_wba <- data.frame(
+  Group1 = sapply(wba_combos, `[`, 1),
+  Group2 = sapply(wba_combos, `[`, 2),
+  MeanDifference = diffs_wba
+)
+
+tamhane_wba <- pairwise.t.test(x = flanders_data$Score,
+                                g = flanders_data$WBA,
+                                p.adjust.method = "holm",
+                                pool.sd = FALSE)
+
+pvals_wba <- as.data.frame(as.table(tamhane_wba$p.value))
+colnames(pvals_wba) <- c("Group1", "Group2", "p_value")
+
+pvals_wba$Group1 <- as.character(pvals_wba$Group1)
+pvals_wba$Group2 <- as.character(pvals_wba$Group2)
+
+pvals_wba$min <- pmin(pvals_wba$Group1, pvals_wba$Group2)
+pvals_wba$max <- pmax(pvals_wba$Group1, pvals_wba$Group2)
+
+pvals_wba_clean <- subset(pvals_wba, !is.na(p_value))
+pvals_wba_clean <- pvals_wba_clean[, c("min", "max", "p_value")]
+colnames(pvals_wba_clean) <- c("Group1", "Group2", "p_value")
+
+tamhane_results_wba <- merge(diff_table_wba, pvals_wba_clean, by = c("Group1", "Group2"))
+
+print(tamhane_results_wba)
+```
+###5.2.2 Own region
+```{r}
+ownregion <- dataset_pci_aanwezigheid %>%
+  filter(vraag_label == "Own region")
+
+ownregion_data <- work_dataset %>% 
+  dplyr::select(ID, 
+                WBA, 
+                Year,
+                Q13) %>% 
+  gather(key = "Question", 
+         value = "Score", 
+         Q13) %>%
+  filter(Score != 6) %>%
+  mutate(Score = Score - 3) %>%
+  transmute(ID, 
+            WBA = factor(WBA), 
+            Question = factor(Question),
+            Year = factor(Year), 
+            Score)
+
+
+Anova_ownregion <- aov(data = ownregion_data,   Score ~ Year*WBA)
+Anova_ownregion2 <- aov(data = ownregion_data, Score ~ Year+WBA)
+anova(Anova_ownregion2, Anova_ownregion)
+summary_ownregion <- summary(Anova_ownregion2)
+summary_ownregion
+
+effectsize::eta_squared(Anova_ownregion2, partial = FALSE)
+effectsize::eta_squared(Anova_ownregion2, partial = TRUE)
+
+
+# Tamhane t-tests 
+tamhane_ownregion_year <- pairwise.t.test(x = ownregion_data$Score,
+                                                    g = ownregion_data$Year,
+                                                    p.adjust.method = "holm",
+                                                    pool.sd = FALSE)  # Welch t-test
+tamhane_ownregion_year
+
+tamhane_ownregion_wba <- pairwise.t.test(x = ownregion_data$Score,
+                                                   g = ownregion_data$WBA,
+                                                   p.adjust.method = "holm",
+                                                   pool.sd = FALSE)  # Welch t-test
+tamhane_ownregion_wba
+means_year <- tapply(ownregion_data$Score, ownregion_data$Year, mean)
+year_combos <- combn(names(means_year), 2, simplify = FALSE)
+
+diffs_year <- sapply(year_combos, function(pair) {
+  means_year[pair[2]] - means_year[pair[1]]})
+
+diff_table_year <- data.frame(Group1 = sapply(year_combos, `[`, 1),
+                              Group2 = sapply(year_combos, `[`, 2),
+                              MeanDifference = diffs_year)
+
+tamhane_year <- pairwise.t.test(x = ownregion_data$Score,
+                                 g = ownregion_data$Year,
+                                 p.adjust.method = "holm",
+                                 pool.sd = FALSE)
+
+pvals_year <- as.data.frame(as.table(tamhane_year$p.value))
+colnames(pvals_year) <- c("Group1", "Group2", "p_value")
+
+
+pvals_year$Group1 <- as.character(pvals_year$Group1)
+pvals_year$Group2 <- as.character(pvals_year$Group2)
+pvals_year_sorted <- pvals_year
+pvals_year_sorted$min <- pmin(pvals_year$Group1, pvals_year$Group2)
+pvals_year_sorted$max <- pmax(pvals_year$Group1, pvals_year$Group2)
+pvals_year_clean <- subset(pvals_year_sorted, !is.na(p_value))
+
+pvals_year_clean <- pvals_year_clean[, c("min", "max", "p_value")]
+colnames(pvals_year_clean) <- c("Group1", "Group2", "p_value")
+
+tamhane_results_year <- merge(diff_table_year, pvals_year_clean, by = c("Group1", "Group2"))
+
+print(tamhane_results_year)
+
+means_wba <- tapply(ownregion_data$Score, ownregion_data$WBA, mean)
+
+wba_combos <- combn(names(means_wba), 2, simplify = FALSE)
+
+diffs_wba <- sapply(wba_combos, function(pair) {
+  means_wba[pair[2]] - means_wba[pair[1]]
+})
+
+diff_table_wba <- data.frame(
+  Group1 = sapply(wba_combos, `[`, 1),
+  Group2 = sapply(wba_combos, `[`, 2),
+  MeanDifference = diffs_wba
+)
+
+# Tamhane-test 
+tamhane_wba <- pairwise.t.test(x = ownregion_data$Score,
+                                g = ownregion_data$WBA,
+                                p.adjust.method = "holm",
+                                pool.sd = FALSE)
+
+pvals_wba <- as.data.frame(as.table(tamhane_wba$p.value))
+colnames(pvals_wba) <- c("Group1", "Group2", "p_value")
+
+pvals_wba$Group1 <- as.character(pvals_wba$Group1)
+pvals_wba$Group2 <- as.character(pvals_wba$Group2)
+
+pvals_wba$min <- pmin(pvals_wba$Group1, pvals_wba$Group2)
+pvals_wba$max <- pmax(pvals_wba$Group1, pvals_wba$Group2)
+
+pvals_wba_clean <- subset(pvals_wba, !is.na(p_value))
+pvals_wba_clean <- pvals_wba_clean[, c("min", "max", "p_value")]
+colnames(pvals_wba_clean) <- c("Group1", "Group2", "p_value")
+
+tamhane_results_wba <- merge(diff_table_wba, pvals_wba_clean, by = c("Group1", "Group2"))
+
+print(tamhane_results_wba)
+```
+#6 Differences in PCI 
+##6.1 Flanders-general
+```{r}
+# WBA
+dat_2023_WBA <- dataset_aanwezigheid %>% filter(Question == "Q12" & Year == 2023 & WBA == 1)
+x2023_WBA <- dat_2023_WBA$Score
+sim2023_WBA  <- qd_moments(x2023_WBA, nsim = 1000, func = "dq_pci2")
+
+dat_2020_WBA <- dataset_aanwezigheid %>% filter(Question == "Q12" & Year == 2020 & WBA == 1)
+x2020_WBA <- dat_2020_WBA$Score
+sim2020_WBA  <- qd_moments(x2020_WBA, nsim = 1000, func = "dq_pci2")
+
+dat_2017_WBA <- dataset_aanwezigheid %>% filter(Question == "Q12" & Year == 2017 & WBA == 1)
+x2017_WBA <- dat_2017_WBA$Score
+sim2017_WBA  <- qd_moments(x2017_WBA, nsim = 1000, func = "dq_pci2")
+
+
+
+# NWBA
+dat_2023_NWBA <- dataset_aanwezigheid %>% filter(Question == "Q12" & Year == 2023 & WBA == 0)
+x2023_NWBA <- dat_2023_NWBA$Score
+sim2023_NWBA  <- qd_moments(x2023_NWBA, nsim = 1000, func = "dq_pci2")
+
+dat_2020_NWBA <- dataset_aanwezigheid %>% filter(Question == "Q12" & Year == 2020 & WBA == 0)
+x2020_NWBA <- dat_2020_NWBA$Score
+sim2020_NWBA  <- qd_moments(x2020_NWBA, nsim = 1000, func = "dq_pci2")
+
+dat_2017_NWBA <- dataset_aanwezigheid %>% filter(Question == "Q12" & Year == 2017 & WBA == 0)
+x2017_NWBA <- dat_2017_NWBA$Score
+sim2017_NWBA  <- qd_moments(x2017_NWBA, nsim = 1000, func = "dq_pci2")
+
+opties_1 <- c("sim2017", "sim2020", "sim2023")
+opties_2 <- c("_WBA", "_NWBA")
+
+results_Flanders <- data.frame()
+
+for(x in opties_1){
+  for(y in opties_2){
+    for(r in opties_1){
+      for(s in opties_2){
+        
+        a <- paste0(x,y)
+        b <- paste0(r,s)
+        
+        if(a == b){
+          cat(a,": skipping self comparison \n")
+          next
+        }
+        
+        cat("comparing", a, "with", b, "\n")
+        
+        res <- qd_pci_2sample_test(a,b)
+        
+        if(nrow(results_Flanders) == 0){
+          results_Flanders <- res
+        }else{
+          results_Flanders <- rbind(results_Flanders, res)
+        }
+      }
+    }
+  }
+}
+
+results_Flanders_clean <- results_Flanders %>%
+  mutate(
+    pci1 = str_remove(pci1, "^sim"),
+    pci2 = str_remove(pci2, "^sim"),
+    distance = round(distance, 2),
+    p_value = round(p_value, 2),
+    significance = case_when(p_value < 0.001 ~ "***",
+                             p_value < 0.01  ~ "**",
+                             p_value < 0.05  ~ "*",
+                             TRUE            ~ "NS"))
+
+``` 
+##6.2 Own region
+```{r}
+# WBA
+dat_2023_WBA <- dataset_aanwezigheid %>% filter(Question == "Q13" & Year == 2023 & WBA == 1)
+x2023_WBA <- dat_2023_WBA$Score
+sim2023_WBA  <- qd_moments(x2023_WBA, nsim = 1000, func = "dq_pci2")
+
+dat_2020_WBA <- dataset_aanwezigheid %>% filter(Question == "Q13" & Year == 2020 & WBA == 1)
+x2020_WBA <- dat_2020_WBA$Score
+sim2020_WBA  <- qd_moments(x2020_WBA, nsim = 1000, func = "dq_pci2")
+
+# NWBA
+dat_2023_NWBA <- dataset_aanwezigheid %>% filter(Question == "Q13" & Year == 2023 & WBA == 0)
+x2023_NWBA <- dat_2023_NWBA$Score
+sim2023_NWBA  <- qd_moments(x2023_NWBA, nsim = 1000, func = "dq_pci2")
+
+dat_2020_NWBA <- dataset_aanwezigheid %>% filter(Question == "Q13" & Year == 2020 & WBA == 0)
+x2020_NWBA <- dat_2020_NWBA$Score
+sim2020_NWBA  <- qd_moments(x2020_NWBA, nsim = 1000, func = "dq_pci2")
+
+
+opties_1 <- c("sim2020", "sim2023")
+opties_2 <- c("_WBA", "_NWBA")
+
+results_ownregion <- data.frame()
+
+for(x in opties_1){
+  for(y in opties_2){
+    for(r in opties_1){
+      for(s in opties_2){
+        
+        a <- paste0(x,y)
+        b <- paste0(r,s)
+        
+        if(a == b){
+          cat(a,": skipping self comparison \n")
+          next
+        }
+        
+        cat("comparing", a, "with", b, "\n")
+        
+        res <- qd_pci_2sample_test(a,b)
+        
+        if(nrow(results_ownregion) == 0){
+          results_ownregion <- res
+        }else{
+          results_ownregion <- rbind(results_ownregion, res)
+        }
+      }
+    }
+  }
+}
+
+results_ownregion_clean <- results_ownregion %>%
+  mutate(
+    pci1 = str_remove(pci1, "^sim"),
+    pci2 = str_remove(pci2, "^sim"),
+    distance = round(distance, 2),
+    p_value = round(p_value, 2),
+    significance = case_when(p_value < 0.001 ~ "***",
+                             p_value < 0.01  ~ "**",
+                             p_value < 0.05  ~ "*",
+                             TRUE            ~ "NS"))
+
+``` 
+
+
+##6.3 Non-Electric fencing
+```{r}
+# WBA
+dat_2023_WBA <- dataset_maatregelen %>% filter(Question == "Q19a" & Year == 2023 & WBA == 1)
+x2023_WBA <- dat_2023_WBA$Score
+sim2023_WBA  <- qd_moments(x2023_WBA, nsim = 1000, func = "dq_pci2")
+
+dat_2020_WBA <- dataset_maatregelen %>% filter(Question == "Q19a" & Year == 2020 & WBA == 1)
+x2020_WBA <- dat_2020_WBA$Score
+sim2020_WBA  <- qd_moments(x2020_WBA, nsim = 1000, func = "dq_pci2")
+
+dat_2017_WBA <- dataset_maatregelen %>% filter(Question == "Q19a" & Year == 2017 & WBA == 1)
+x2017_WBA <- dat_2017_WBA$Score
+sim2017_WBA  <- qd_moments(x2017_WBA, nsim = 1000, func = "dq_pci2")
+
+
+
+# NWBA
+dat_2023_NWBA <- dataset_maatregelen %>% filter(Question == "Q19a" & Year == 2023 & WBA == 0)
+x2023_NWBA <- dat_2023_NWBA$Score
+sim2023_NWBA  <- qd_moments(x2023_NWBA, nsim = 1000, func = "dq_pci2")
+
+dat_2020_NWBA <- dataset_maatregelen %>% filter(Question == "Q19a" & Year == 2020 & WBA == 0)
+x2020_NWBA <- dat_2020_NWBA$Score
+sim2020_NWBA  <- qd_moments(x2020_NWBA, nsim = 1000, func = "dq_pci2")
+
+dat_2017_NWBA <- dataset_maatregelen %>% filter(Question == "Q19a" & Year == 2017 & WBA == 0)
+x2017_NWBA <- dat_2017_NWBA$Score
+sim2017_NWBA  <- qd_moments(x2017_NWBA, nsim = 1000, func = "dq_pci2")
+
+opties_1 <- c("sim2017", "sim2020", "sim2023")
+opties_2 <- c("_WBA", "_NWBA")
+
+results_NE_fencing <- data.frame()
+
+for(x in opties_1){
+  for(y in opties_2){
+    for(r in opties_1){
+      for(s in opties_2){
+        
+        a <- paste0(x,y)
+        b <- paste0(r,s)
+        
+        if(a == b){
+          cat(a,": skipping self comparison \n")
+          next
+        }
+        
+        cat("comparing", a, "with", b, "\n")
+        
+        res <- qd_pci_2sample_test(a,b)
+        
+        if(nrow(results_NE_fencing) == 0){
+          results_NE_fencing <- res
+        }else{
+          results_NE_fencing <- rbind(results_NE_fencing, res)
+        }
+      }
+    }
+  }
+}
+
+results_NE_fencing_clean <- results_NE_fencing %>%
+  mutate(
+    pci1 = str_remove(pci1, "^sim"),
+    pci2 = str_remove(pci2, "^sim"),
+    distance = round(distance, 2),
+    p_value = round(p_value, 2),
+    significance = case_when(p_value < 0.001 ~ "***",
+                             p_value < 0.01  ~ "**",
+                             p_value < 0.05  ~ "*",
+                             TRUE            ~ "NS"))
+
+``` 
+##6.4 Electric fencing
+```{r}
+# WBA
+dat_2023_WBA <- dataset_maatregelen %>% filter(Question == "Q19b" & Year == 2023 & WBA == 1)
+x2023_WBA <- dat_2023_WBA$Score
+sim2023_WBA  <- qd_moments(x2023_WBA, nsim = 1000, func = "dq_pci2")
+
+dat_2020_WBA <- dataset_maatregelen %>% filter(Question == "Q19b" & Year == 2020 & WBA == 1)
+x2020_WBA <- dat_2020_WBA$Score
+sim2020_WBA  <- qd_moments(x2020_WBA, nsim = 1000, func = "dq_pci2")
+
+dat_2017_WBA <- dataset_maatregelen %>% filter(Question == "Q19b" & Year == 2017 & WBA == 1)
+x2017_WBA <- dat_2017_WBA$Score
+sim2017_WBA  <- qd_moments(x2017_WBA, nsim = 1000, func = "dq_pci2")
+
+
+
+# NWBA
+dat_2023_NWBA <- dataset_maatregelen %>% filter(Question == "Q19b" & Year == 2023 & WBA == 0)
+x2023_NWBA <- dat_2023_NWBA$Score
+sim2023_NWBA  <- qd_moments(x2023_NWBA, nsim = 1000, func = "dq_pci2")
+
+dat_2020_NWBA <- dataset_maatregelen %>% filter(Question == "Q19b" & Year == 2020 & WBA == 0)
+x2020_NWBA <- dat_2020_NWBA$Score
+sim2020_NWBA  <- qd_moments(x2020_NWBA, nsim = 1000, func = "dq_pci2")
+
+dat_2017_NWBA <- dataset_maatregelen %>% filter(Question == "Q19b" & Year == 2017 & WBA == 0)
+x2017_NWBA <- dat_2017_NWBA$Score
+sim2017_NWBA  <- qd_moments(x2017_NWBA, nsim = 1000, func = "dq_pci2")
+
+opties_1 <- c("sim2017", "sim2020", "sim2023")
+opties_2 <- c("_WBA", "_NWBA")
+
+results_E_fencing <- data.frame()
+
+for(x in opties_1){
+  for(y in opties_2){
+    for(r in opties_1){
+      for(s in opties_2){
+        
+        a <- paste0(x,y)
+        b <- paste0(r,s)
+        
+        if(a == b){
+          cat(a,": skipping self comparison \n")
+          next
+        }
+        
+        cat("comparing", a, "with", b, "\n")
+        
+        res <- qd_pci_2sample_test(a,b)
+        
+        if(nrow(results_E_fencing) == 0){
+          results_E_fencing <- res
+        }else{
+          results_E_fencing <- rbind(results_E_fencing, res)
+        }
+      }
+    }
+  }
+}
+
+results_E_fencing_clean <- results_E_fencing %>%
+  mutate(
+    pci1 = str_remove(pci1, "^sim"),
+    pci2 = str_remove(pci2, "^sim"),
+    distance = round(distance, 2),
+    p_value = round(p_value, 2),
+    significance = case_when(p_value < 0.001 ~ "***",
+                             p_value < 0.01  ~ "**",
+                             p_value < 0.05  ~ "*",
+                             TRUE            ~ "NS"))
+
+``` 
+
+##6.5 Hunting
+```{r}
+# WBA
+dat_2023_WBA <- dataset_maatregelen %>% filter(Question == "Q19c" & Year == 2023 & WBA == 1)
+x2023_WBA <- dat_2023_WBA$Score
+sim2023_WBA  <- qd_moments(x2023_WBA, nsim = 1000, func = "dq_pci2")
+
+dat_2020_WBA <- dataset_maatregelen %>% filter(Question == "Q19c" & Year == 2020 & WBA == 1)
+x2020_WBA <- dat_2020_WBA$Score
+sim2020_WBA  <- qd_moments(x2020_WBA, nsim = 1000, func = "dq_pci2")
+
+dat_2017_WBA <- dataset_maatregelen %>% filter(Question == "Q19c" & Year == 2017 & WBA == 1)
+x2017_WBA <- dat_2017_WBA$Score
+sim2017_WBA  <- qd_moments(x2017_WBA, nsim = 1000, func = "dq_pci2")
+
+
+
+# NWBA
+dat_2023_NWBA <- dataset_maatregelen %>% filter(Question == "Q19c" & Year == 2023 & WBA == 0)
+x2023_NWBA <- dat_2023_NWBA$Score
+sim2023_NWBA  <- qd_moments(x2023_NWBA, nsim = 1000, func = "dq_pci2")
+
+dat_2020_NWBA <- dataset_maatregelen %>% filter(Question == "Q19c" & Year == 2020 & WBA == 0)
+x2020_NWBA <- dat_2020_NWBA$Score
+sim2020_NWBA  <- qd_moments(x2020_NWBA, nsim = 1000, func = "dq_pci2")
+
+dat_2017_NWBA <- dataset_maatregelen %>% filter(Question == "Q19c" & Year == 2017 & WBA == 0)
+x2017_NWBA <- dat_2017_NWBA$Score
+sim2017_NWBA  <- qd_moments(x2017_NWBA, nsim = 1000, func = "dq_pci2")
+
+opties_1 <- c("sim2017", "sim2020", "sim2023")
+opties_2 <- c("_WBA", "_NWBA")
+
+results_Hunting <- data.frame()
+
+for(x in opties_1){
+  for(y in opties_2){
+    for(r in opties_1){
+      for(s in opties_2){
+        
+        a <- paste0(x,y)
+        b <- paste0(r,s)
+        
+        if(a == b){
+          cat(a,": skipping self comparison \n")
+          next
+        }
+        
+        cat("comparing", a, "with", b, "\n")
+        
+        res <- qd_pci_2sample_test(a,b)
+        
+        if(nrow(results_Hunting) == 0){
+          results_Hunting <- res
+        }else{
+          results_Hunting <- rbind(results_Hunting, res)
+        }
+      }
+    }
+  }
+}
+
+results_Hunting_clean <- results_Hunting %>%
+  mutate(
+    pci1 = str_remove(pci1, "^sim"),
+    pci2 = str_remove(pci2, "^sim"),
+    distance = round(distance, 2),
+    p_value = round(p_value, 2),
+    significance = case_when(p_value < 0.001 ~ "***",
+                             p_value < 0.01  ~ "**",
+                             p_value < 0.05  ~ "*",
+                             TRUE            ~ "NS"))
+``` 
+
+##6.6 Cages
+```{r}
+# WBA
+dat_2023_WBA <- dataset_maatregelen %>% filter(Question == "Q19d" & Year == 2023 & WBA == 1)
+x2023_WBA <- dat_2023_WBA$Score
+sim2023_WBA  <- qd_moments(x2023_WBA, nsim = 1000, func = "dq_pci2")
+
+dat_2020_WBA <- dataset_maatregelen %>% filter(Question == "Q19d" & Year == 2020 & WBA == 1)
+x2020_WBA <- dat_2020_WBA$Score
+sim2020_WBA  <- qd_moments(x2020_WBA, nsim = 1000, func = "dq_pci2")
+
+dat_2017_WBA <- dataset_maatregelen %>% filter(Question == "Q19d" & Year == 2017 & WBA == 1)
+x2017_WBA <- dat_2017_WBA$Score
+sim2017_WBA  <- qd_moments(x2017_WBA, nsim = 1000, func = "dq_pci2")
+
+
+
+# NWBA
+dat_2023_NWBA <- dataset_maatregelen %>% filter(Question == "Q19d" & Year == 2023 & WBA == 0)
+x2023_NWBA <- dat_2023_NWBA$Score
+sim2023_NWBA  <- qd_moments(x2023_NWBA, nsim = 1000, func = "dq_pci2")
+
+dat_2020_NWBA <- dataset_maatregelen %>% filter(Question == "Q19d" & Year == 2020 & WBA == 0)
+x2020_NWBA <- dat_2020_NWBA$Score
+sim2020_NWBA  <- qd_moments(x2020_NWBA, nsim = 1000, func = "dq_pci2")
+
+dat_2017_NWBA <- dataset_maatregelen %>% filter(Question == "Q19d" & Year == 2017 & WBA == 0)
+x2017_NWBA <- dat_2017_NWBA$Score
+sim2017_NWBA  <- qd_moments(x2017_NWBA, nsim = 1000, func = "dq_pci2")
+
+opties_1 <- c("sim2017", "sim2020", "sim2023")
+opties_2 <- c("_WBA", "_NWBA")
+
+results_Cages <- data.frame()
+
+for(x in opties_1){
+  for(y in opties_2){
+    for(r in opties_1){
+      for(s in opties_2){
+        
+        a <- paste0(x,y)
+        b <- paste0(r,s)
+        
+        if(a == b){
+          cat(a,": skipping self comparison \n")
+          next
+        }
+        
+        cat("comparing", a, "with", b, "\n")
+        
+        res <- qd_pci_2sample_test(a,b)
+        
+        if(nrow(results_Cages) == 0){
+          results_Cages <- res
+        }else{
+          results_Cages <- rbind(results_Cages, res)
+        }
+      }
+    }
+  }
+}
+
+results_Cages_clean <- results_Cages %>%
+  mutate(
+    pci1 = str_remove(pci1, "^sim"),
+    pci2 = str_remove(pci2, "^sim"),
+    distance = round(distance, 2),
+    p_value = round(p_value, 2),
+    significance = case_when(p_value < 0.001 ~ "***",
+                             p_value < 0.01  ~ "**",
+                             p_value < 0.05  ~ "*",
+                             TRUE            ~ "NS"))
+
+``` 
+
+##6.7 Translocation
+```{r}
+# WBA
+dat_2023_WBA <- dataset_maatregelen %>% filter(Question == "Q19e" & Year == 2023 & WBA == 1)
+x2023_WBA <- dat_2023_WBA$Score
+sim2023_WBA  <- qd_moments(x2023_WBA, nsim = 1000, func = "dq_pci2")
+
+dat_2020_WBA <- dataset_maatregelen %>% filter(Question == "Q19e" & Year == 2020 & WBA == 1)
+x2020_WBA <- dat_2020_WBA$Score
+sim2020_WBA  <- qd_moments(x2020_WBA, nsim = 1000, func = "dq_pci2")
+
+
+# NWBA
+dat_2023_NWBA <- dataset_maatregelen %>% filter(Question == "Q19e" & Year == 2023 & WBA == 0)
+x2023_NWBA <- dat_2023_NWBA$Score
+sim2023_NWBA  <- qd_moments(x2023_NWBA, nsim = 1000, func = "dq_pci2")
+
+dat_2020_NWBA <- dataset_maatregelen %>% filter(Question == "Q19e" & Year == 2020 & WBA == 0)
+x2020_NWBA <- dat_2020_NWBA$Score
+sim2020_NWBA  <- qd_moments(x2020_NWBA, nsim = 1000, func = "dq_pci2")
+
+opties_1 <- c("sim2020", "sim2023")
+opties_2 <- c("_WBA", "_NWBA")
+
+results_Translocation <- data.frame()
+
+for(x in opties_1){
+  for(y in opties_2){
+    for(r in opties_1){
+      for(s in opties_2){
+        
+        a <- paste0(x,y)
+        b <- paste0(r,s)
+        
+        if(a == b){
+          cat(a,": skipping self comparison \n")
+          next
+        }
+        
+        cat("comparing", a, "with", b, "\n")
+        
+        res <- qd_pci_2sample_test(a,b)
+        
+        if(nrow(results_Translocation) == 0){
+          results_Translocation <- res
+        }else{
+          results_Translocation <- rbind(results_Translocation, res)
+        }
+      }
+    }
+  }
+}
+
+results_Translocation_clean <- results_Translocation %>%
+  mutate(
+    pci1 = str_remove(pci1, "^sim"),
+    pci2 = str_remove(pci2, "^sim"),
+    distance = round(distance, 2),
+    p_value = round(p_value, 2),
+    significance = case_when(p_value < 0.001 ~ "***",
+                             p_value < 0.01  ~ "**",
+                             p_value < 0.05  ~ "*",
+                             TRUE            ~ "NS"))
+
+``` 
+
+##6.8 Anticonception
+```{r}
+# WBA
+dat_2023_WBA <- dataset_maatregelen %>% filter(Question == "Q19f" & Year == 2023 & WBA == 1)
+x2023_WBA <- dat_2023_WBA$Score
+sim2023_WBA  <- qd_moments(x2023_WBA, nsim = 1000, func = "dq_pci2")
+
+dat_2020_WBA <- dataset_maatregelen %>% filter(Question == "Q19f" & Year == 2020 & WBA == 1)
+x2020_WBA <- dat_2020_WBA$Score
+sim2020_WBA  <- qd_moments(x2020_WBA, nsim = 1000, func = "dq_pci2")
+
+
+# NWBA
+dat_2023_NWBA <- dataset_maatregelen %>% filter(Question == "Q19f" & Year == 2023 & WBA == 0)
+x2023_NWBA <- dat_2023_NWBA$Score
+sim2023_NWBA  <- qd_moments(x2023_NWBA, nsim = 1000, func = "dq_pci2")
+
+dat_2020_NWBA <- dataset_maatregelen %>% filter(Question == "Q19f" & Year == 2020 & WBA == 0)
+x2020_NWBA <- dat_2020_NWBA$Score
+sim2020_NWBA  <- qd_moments(x2020_NWBA, nsim = 1000, func = "dq_pci2")
+
+opties_1 <- c("sim2020", "sim2023")
+opties_2 <- c("_WBA", "_NWBA")
+
+results_Anticonception <- data.frame()
+
+for(x in opties_1){
+  for(y in opties_2){
+    for(r in opties_1){
+      for(s in opties_2){
+        
+        a <- paste0(x,y)
+        b <- paste0(r,s)
+        
+        if(a == b){
+          cat(a,": skipping self comparison \n")
+          next
+        }
+        
+        cat("comparing", a, "with", b, "\n")
+        
+        res <- qd_pci_2sample_test(a,b)
+        
+        if(nrow(results_Anticonception) == 0){
+          results_Anticonception <- res
+        }else{
+          results_Anticonception <- rbind(results_Anticonception, res)
+        }
+      }
+    }
+  }
+}
+
+results_Anticonception_clean <- results_Anticonception %>%
+  mutate(
+    pci1 = str_remove(pci1, "^sim"),
+    pci2 = str_remove(pci2, "^sim"),
+    distance = round(distance, 2),
+    p_value = round(p_value, 2),
+    significance = case_when(p_value < 0.001 ~ "***",
+                             p_value < 0.01  ~ "**",
+                             p_value < 0.05  ~ "*",
+                             TRUE            ~ "NS"))
+
+``` 
+
