@@ -4,7 +4,7 @@
 cff-version: 1.2.0
 title: >-
   Changes in public perceptions of wild boar presence and
-  management in Flanders - R_scripts & data
+  management in Flanders (Belgium) - R_scripts & data
 message: >-
   If you use this software, please cite it using the
   metadata from this file.
@@ -24,7 +24,7 @@ repository-code: 'https://github.com/inbo/publication_wild_boar_survey'
 url: 'https://www.inbo.be'
 abstract: >-
   This DOI refers to both the scripts and the dataset used
-  for the analysis of surveys towards public perceptions of wild boar in Flanders, Belgium (2017,2020,2013), as described in Casaer,
+  for the analysis of surveys towards public perceptions of wild boar in Flanders, Belgium (2017,2020,2023), as described in Casaer,
   J., & Rutten, A. (2026). Changes in public perceptions of
   wild boar presence and management in Flanders. Scientific
   Reports.
